@@ -114,8 +114,15 @@ class Database:
         )
         self._ensure_column("agents", "status", "TEXT NOT NULL DEFAULT 'ожидает'")
         self._ensure_column("projects", "archived", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("projects", "memory", "TEXT NOT NULL DEFAULT '{}'")
         self._ensure_column("internal_messages", "topic", "TEXT NOT NULL DEFAULT 'direct'")
         self._ensure_column("internal_messages", "chat_id", "TEXT NOT NULL DEFAULT 'default'")
+        self.conn.execute("UPDATE agents SET status='ожидание' WHERE status IN ('ожидает', '')")
+        self.conn.execute("UPDATE agents SET status='анализ задачи' WHERE status='думает'")
+        self.conn.execute("UPDATE agents SET status='обсуждение' WHERE status='обсуждает задачу'")
+        self.conn.execute("UPDATE agents SET status='работа с файлами' WHERE status='работает с файлами'")
+        self.conn.execute("UPDATE agents SET status='выполнение действия' WHERE status='выполняет задачу'")
+        self.conn.execute("UPDATE agents SET status='завершение работы' WHERE status='завершил задачу'")
         if not self.get_chat("default"):
             self.upsert_chat(ChatSession("default", None, "Основной чат"))
         if not self.get_setting("global_model", ""):
@@ -274,7 +281,7 @@ class Database:
         event.id = int(cur.lastrowid)
         return event
 
-    def list_logs(self, limit: int = 500, text_filter: str = "", event_type: str = "", agent_id: int | None = None) -> list[LogEvent]:
+    def list_logs(self, limit: int = 500, text_filter: str = "", event_type: str = "", agent_id: int | None = None, project_id: int | None = None) -> list[LogEvent]:
         clauses: list[str] = []
         params: list[object] = []
         if text_filter:
@@ -286,6 +293,9 @@ class Database:
         if agent_id is not None:
             clauses.append("agent_id=?")
             params.append(agent_id)
+        if project_id is not None:
+            clauses.append("project_id=?")
+            params.append(project_id)
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         rows = self.conn.execute(f"SELECT * FROM logs{where} ORDER BY id DESC LIMIT ?", (*params, limit)).fetchall()
         return [LogEvent(**dict(row)) for row in reversed(rows)]
@@ -307,6 +317,36 @@ class Database:
     def list_projects(self) -> list[Project]:
         rows = self.conn.execute("SELECT * FROM projects WHERE archived=0 ORDER BY name COLLATE NOCASE").fetchall()
         return [Project(id=row["id"], name=row["name"], goal=row["goal"], description=row["description"], workspace_path=row["workspace_path"], archived=bool(row["archived"]), created_at=row["created_at"]) for row in rows]
+
+    def get_project(self, project_id: int | None) -> Project | None:
+        if project_id is None:
+            return None
+        row = self.conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+        return Project(id=row["id"], name=row["name"], goal=row["goal"], description=row["description"], workspace_path=row["workspace_path"], archived=bool(row["archived"]), created_at=row["created_at"]) if row else None
+
+    def get_project_memory(self, project_id: int | None) -> dict[str, object]:
+        if project_id is None:
+            return {}
+        row = self.conn.execute("SELECT memory FROM projects WHERE id=?", (project_id,)).fetchone()
+        if not row:
+            return {}
+        try:
+            return json.loads(row["memory"] or "{}")
+        except json.JSONDecodeError:
+            return {}
+
+    def update_project_memory(self, project_id: int | None, **updates: object) -> dict[str, object]:
+        if project_id is None:
+            return {}
+        memory = self.get_project_memory(project_id)
+        for key, value in updates.items():
+            if isinstance(value, list) and isinstance(memory.get(key), list):
+                memory[key] = (memory[key] + value)[-200:]  # type: ignore[operator]
+            else:
+                memory[key] = value
+        self.conn.execute("UPDATE projects SET memory=? WHERE id=?", (json.dumps(memory, ensure_ascii=False), project_id))
+        self.conn.commit()
+        return memory
 
     def upsert_task(self, task: TaskSpec) -> TaskSpec:
         payload = (task.title, task.task_type, task.status, task.agent_id, task.project_id, json.dumps(task.payload, ensure_ascii=False), task.schedule, task.created_at)

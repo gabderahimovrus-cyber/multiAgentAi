@@ -52,8 +52,8 @@ class OllamaProvider:
             return "local"
         return host
 
-    def list_models_with_sources(self) -> list[tuple[str, str, str]]:
-        models: list[tuple[str, str, str]] = []
+    def list_model_details(self) -> list[dict[str, object]]:
+        models: list[dict[str, object]] = []
         for endpoint in self.endpoints:
             try:
                 data = self._request("GET", "/api/tags", timeout=5, base_url=endpoint)
@@ -62,8 +62,20 @@ class OllamaProvider:
             for item in data.get("models", []):
                 name = item.get("name", "")
                 if name:
-                    models.append((name, self._source_label(endpoint), endpoint))
+                    details = item.get("details") or {}
+                    models.append({
+                        "name": name,
+                        "source": self._source_label(endpoint),
+                        "endpoint": endpoint,
+                        "size": item.get("size", 0),
+                        "parameters": details.get("parameter_size", ""),
+                        "family": details.get("family", ""),
+                        "status": "available",
+                    })
         return models
+
+    def list_models_with_sources(self) -> list[tuple[str, str, str]]:
+        return [(str(item["name"]), str(item["source"]), str(item["endpoint"])) for item in self.list_model_details()]
 
     def list_models(self) -> list[str]:
         return [f"{name} [{source}]" for name, source, _endpoint in self.list_models_with_sources()]

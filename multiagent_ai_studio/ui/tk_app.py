@@ -10,7 +10,7 @@ from ..core.agents import AgentService
 from ..core.change_proposals import ChangeProposalService
 from ..core.database import Database
 from ..core.logging_service import LogService
-from ..core.models import Agent, AgentRole, DEFAULT_PERMISSIONS, PERMISSION_HELP
+from ..core.models import Agent, AgentRole, AgentStatus, DEFAULT_PERMISSIONS, PERMISSION_HELP, WorkMode
 from ..core.plugins import PluginManager
 from ..core.projects import ProjectService
 from ..core.tasks import TaskManager
@@ -75,6 +75,7 @@ class StudioWindow(Tk):
         self.status_text = StringVar(value=self.t("top.status.stopped"))
         self.activity_text = StringVar(value="Агенты: 0 активных")
         self.global_model = StringVar(value=self.db.get_setting("global_model", ""))
+        self.work_mode = StringVar(value=self.db.get_setting("work_mode", WorkMode.TEAM.value) or WorkMode.TEAM.value)
         self.ollama_endpoints = StringVar(value=self.db.get_setting("ollama_endpoints", "http://127.0.0.1:11434"))
         self._configure_window()
         self._build_styles()
@@ -127,9 +128,14 @@ class StudioWindow(Tk):
         ttk.Button(self.topbar, text=self.t("top.stop"), command=self.stop_system).pack(side=LEFT, padx=3)
         ttk.Label(self.topbar, textvariable=self.status_text, style="Panel.TLabel").pack(side=LEFT, padx=18)
         ttk.Label(self.topbar, textvariable=self.activity_text, style="Muted.TLabel").pack(side=LEFT)
+        ttk.Label(self.topbar, text="Режим", style="Panel.TLabel").pack(side=LEFT, padx=(18, 3))
+        self.work_mode_combo = ttk.Combobox(self.topbar, textvariable=self.work_mode, values=[mode.value for mode in WorkMode], width=18, state="readonly")
+        self.work_mode_combo.pack(side=LEFT)
+        self.work_mode_combo.bind("<<ComboboxSelected>>", lambda _e: self.db.set_setting("work_mode", self.work_mode.get()))
         ttk.Label(self.topbar, text="Ollama endpoints (;)", style="Panel.TLabel").pack(side=LEFT, padx=(18, 3))
         ttk.Entry(self.topbar, textvariable=self.ollama_endpoints, width=38).pack(side=LEFT)
         ttk.Button(self.topbar, text="Применить", command=self.apply_model_settings).pack(side=LEFT, padx=4)
+        ttk.Button(self.topbar, text="Панели", command=self.restore_panels).pack(side=LEFT, padx=4)
         ttk.Label(self.topbar, text=self.t("settings.theme"), style="Panel.TLabel").pack(side=RIGHT, padx=(10, 3))
         self.theme_box = ttk.Combobox(self.topbar, values=["dark", "light"], textvariable=self.theme, width=8, state="readonly")
         self.theme_box.pack(side=RIGHT)
@@ -143,6 +149,7 @@ class StudioWindow(Tk):
         self.main_pane.add(self.left, weight=1)
         self.main_pane.add(self.center_vertical, weight=4)
         self.main_pane.add(self.right, weight=2)
+        self._panels_visible = {"left": True, "right": True, "bottom": True}
         self.chat_frame = ttk.Frame(self.center_vertical, style="Panel.TFrame")
         self.log_frame = ttk.Frame(self.center_vertical, style="Panel.TFrame")
         self.center_vertical.add(self.chat_frame, weight=5)
@@ -153,7 +160,11 @@ class StudioWindow(Tk):
         self._build_log_panel()
 
     def _build_left_panel(self) -> None:
-        ttk.Label(self.left, text="Чаты проекта", style="Panel.TLabel", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(10, 3))
+        hide = ttk.Frame(self.left, style="Panel.TFrame")
+        hide.pack(fill="x", padx=8, pady=(8, 0))
+        ttk.Button(hide, text="Скрыть левую", command=lambda: self.toggle_panel("left")).pack(side=RIGHT)
+        ttk.Label(self.left, text="Проекты, чаты и история", style="Panel.TLabel", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(6, 3))
+        ttk.Label(self.left, text="Чаты проекта", style="Muted.TLabel").pack(anchor="w", padx=10, pady=(2, 3))
         chat_buttons = ttk.Frame(self.left, style="Panel.TFrame")
         chat_buttons.pack(fill="x", padx=10)
         ttk.Button(chat_buttons, text="+", width=3, command=self.create_chat).pack(side=LEFT, padx=(0, 3))
@@ -172,6 +183,7 @@ class StudioWindow(Tk):
     def _build_chat_panel(self) -> None:
         toolbar = ttk.Frame(self.chat_frame, style="Panel.TFrame")
         toolbar.pack(fill="x", padx=10, pady=(10, 4))
+        ttk.Button(toolbar, text="Скрыть низ", command=lambda: self.toggle_panel("bottom")).pack(side=RIGHT, padx=3)
         ttk.Button(toolbar, text=self.t("chat.export"), command=self.export_history).pack(side=RIGHT, padx=3)
         ttk.Button(toolbar, text=self.t("chat.clear"), command=self.clear_session).pack(side=RIGHT, padx=3)
         self.chat_title = ttk.Label(toolbar, text="Единый общий чат проекта", style="Panel.TLabel", font=("Segoe UI", 12, "bold"))
@@ -191,7 +203,10 @@ class StudioWindow(Tk):
         ttk.Button(entry_frame, text="Отправить в общий чат", style="Accent.TButton", command=self.send_message).pack(side=RIGHT, padx=(8, 0), fill="y")
 
     def _build_right_panel(self) -> None:
-        ttk.Label(self.right, text="Агенты команды", style="Panel.TLabel", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=10, pady=(10, 6))
+        right_top = ttk.Frame(self.right, style="Panel.TFrame")
+        right_top.pack(fill="x", padx=8, pady=(8, 0))
+        ttk.Button(right_top, text="Скрыть правую", command=lambda: self.toggle_panel("right")).pack(side=RIGHT)
+        ttk.Label(self.right, text="Агенты команды", style="Panel.TLabel", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=10, pady=(6, 6))
         ttk.Button(self.right, text="Создать нового агента", command=self.create_agent).pack(fill="x", padx=10, pady=(0, 4))
         columns = ("role", "model", "status")
         self.agent_list = ttk.Treeview(self.right, columns=columns, show="tree headings", height=9)
@@ -250,9 +265,11 @@ class StudioWindow(Tk):
         self.log_filter = StringVar()
         self.log_type_filter = StringVar()
         self.log_agent_filter = StringVar()
+        self.log_project_filter = StringVar()
         ttk.Entry(toolbar, textvariable=self.log_filter, width=22).pack(side=LEFT, padx=5)
         ttk.Entry(toolbar, textvariable=self.log_type_filter, width=18).pack(side=LEFT, padx=5)
         ttk.Entry(toolbar, textvariable=self.log_agent_filter, width=8).pack(side=LEFT, padx=5)
+        ttk.Entry(toolbar, textvariable=self.log_project_filter, width=8).pack(side=LEFT, padx=5)
         ttk.Button(toolbar, text=self.t("logs.filter"), command=self.refresh_logs).pack(side=LEFT)
         ttk.Button(toolbar, text=self.t("logs.export"), command=self.export_logs).pack(side=RIGHT)
         self.log_tabs = ttk.Notebook(self.log_frame)
@@ -260,9 +277,26 @@ class StudioWindow(Tk):
         self.event_text = self._log_text_widget(self.log_tabs)
         self.internal_text = self._log_text_widget(self.log_tabs)
         self.reasoning_text = self._log_text_widget(self.log_tabs)
-        self.log_tabs.add(self.event_text, text="События")
+        self.simulation_text = self._log_text_widget(self.log_tabs)
+        self.brain_text = self._log_text_widget(self.log_tabs)
+        decision_frame = ttk.Frame(self.log_tabs, style="Panel.TFrame")
+        self.decision_list = ttk.Treeview(decision_frame, columns=("type", "agent", "message"), show="headings", height=7)
+        for column, title in (("type", "Тип"), ("agent", "Агент"), ("message", "Запрос подтверждения")):
+            self.decision_list.heading(column, text=title)
+        self.decision_list.column("type", width=150)
+        self.decision_list.column("agent", width=80)
+        self.decision_list.column("message", width=600)
+        self.decision_list.pack(fill=BOTH, expand=True, padx=6, pady=6)
+        decision_buttons = ttk.Frame(decision_frame, style="Panel.TFrame")
+        decision_buttons.pack(fill="x", padx=6, pady=(0, 6))
+        ttk.Button(decision_buttons, text="Принять", command=lambda: self.resolve_decision(True)).pack(side=LEFT, padx=3)
+        ttk.Button(decision_buttons, text="Отклонить", command=lambda: self.resolve_decision(False)).pack(side=LEFT, padx=3)
+        self.log_tabs.add(self.event_text, text="Системный журнал")
+        self.log_tabs.add(self.simulation_text, text="Журнал симуляции")
         self.log_tabs.add(self.internal_text, text="Внутренние сообщения")
-        self.log_tabs.add(self.reasoning_text, text="Reasoning/решения")
+        self.log_tabs.add(self.brain_text, text="Мозг системы")
+        self.log_tabs.add(decision_frame, text="Решения")
+        self.log_tabs.add(self.reasoning_text, text="Reasoning")
 
     def _log_text_widget(self, parent) -> Text:
         widget = Text(parent, height=8, wrap=WORD, borderwidth=0, padx=8, pady=8)
@@ -309,15 +343,22 @@ class StudioWindow(Tk):
         self.db.set_setting("ollama_endpoints", ";".join(endpoints) or "http://127.0.0.1:11434")
         self.refresh_models(silent=silent)
         self.db.set_setting("global_model", self.global_model.get())
+        self.db.set_setting("work_mode", self.work_mode.get())
 
     def refresh_models(self, silent: bool = False) -> None:
         try:
-            self.ollama_models = self.providers.get("ollama").list_models()
+            provider = self.providers.get("ollama")
+            self.ollama_models = provider.list_models()
             if hasattr(self, "model_combo"):
                 self.model_combo.configure(values=self.ollama_models)
             if hasattr(self, "global_model_combo"):
                 self.global_model_combo.configure(values=self.ollama_models)
-            self.logs.log("model.discover", f"Обнаружены модели Ollama: {', '.join(self.ollama_models) or 'нет'}")
+            if hasattr(provider, "list_model_details"):
+                details = provider.list_model_details()
+                detail_text = "; ".join(f"{item['name']} [{item['source']}] size={item.get('size') or '-'} params={item.get('parameters') or '-'} status={item.get('status')}" for item in details)
+                self.logs.log("model.discover", f"Обнаружены модели Ollama: {detail_text or 'нет доступных моделей'}")
+            else:
+                self.logs.log("model.discover", f"Обнаружены модели Ollama: {', '.join(self.ollama_models) or 'нет'}")
         except Exception as exc:  # noqa: BLE001
             self.ollama_models = []
             if not silent:
@@ -366,14 +407,27 @@ class StudioWindow(Tk):
         agent_filter = None
         if self.log_agent_filter.get().strip().isdigit():
             agent_filter = int(self.log_agent_filter.get().strip())
-        events = self.db.list_logs(text_filter=self.log_filter.get(), event_type=self.log_type_filter.get(), agent_id=agent_filter)
+        project_filter = int(self.log_project_filter.get().strip()) if self.log_project_filter.get().strip().isdigit() else None
+        events = self.db.list_logs(text_filter=self.log_filter.get(), event_type=self.log_type_filter.get(), agent_id=agent_filter, project_id=project_filter)
         self._fill_text(self.event_text, [f"[{event.created_at}] {event.level} {event.event_type} agent={event.agent_id or '-'}: {event.message}" for event in events])
         internal_lines = []
         for msg in self.db.list_internal_messages(self.chat_id):
             internal_lines.append(f"[{msg.created_at}] {msg.topic} {msg.sender_agent_id}->{msg.receiver_agent_id}: {msg.content}")
         self._fill_text(self.internal_text, internal_lines)
-        reasoning = [f"[{event.created_at}] {event.event_type} agent={event.agent_id}: {event.message}" for event in events if event.event_type in {"agent.reasoning", "agent.decision", "agent.status"}]
+        reasoning = [f"[{event.created_at}] {event.event_type} agent={event.agent_id}: {event.message}" for event in events if event.event_type in {"agent.reasoning", "simulation.agent_message", "agent.status"}]
         self._fill_text(self.reasoning_text, reasoning)
+        simulation = [f"[{event.created_at}] {event.level} {event.event_type} agent={event.agent_id or '-'} project={event.project_id or '-'}: {event.message}" for event in events if event.event_type.startswith(("simulation.", "action.", "observer."))]
+        self._fill_text(self.simulation_text, simulation)
+        brain_lines = []
+        for agent in self.db.list_agents():
+            brain_lines.append(f"{agent.name} [{agent.role}] — {agent.status}; модель: {agent.model or self.global_model.get() or 'глобальная не выбрана'}; workspace: {agent.workspace_path or '-'}")
+        brain_lines.append("\nОчередь действий:")
+        brain_lines.extend(f"- {event.message}" for event in events if event.event_type == "action.plan")
+        self._fill_text(self.brain_text, brain_lines)
+        self.decision_list.delete(*self.decision_list.get_children())
+        for event in events:
+            if event.level == "ACTION" or event.event_type.startswith("approval."):
+                self.decision_list.insert("", END, iid=str(event.id), values=(event.event_type, event.agent_id or "-", event.message[:240]))
 
     def _fill_text(self, widget: Text, lines: list[str]) -> None:
         widget.configure(state="normal")
@@ -536,7 +590,7 @@ class StudioWindow(Tk):
 
     def _generate_response(self, text: str) -> None:
         try:
-            self.agent_service.run_project_chat(self.chat_id, text)
+            self.agent_service.run_project_chat(self.chat_id, text, self.work_mode.get())
         except Exception as exc:  # noqa: BLE001
             self.logs.log("orchestration.error", str(exc), level="ERROR")
             self.after(0, lambda: messagebox.showerror(self.t("app.title"), self.t("error.ollama", error=exc)))
@@ -588,15 +642,47 @@ class StudioWindow(Tk):
     def update_activity(self) -> None:
         agents = self.db.list_agents()
         active = sum(1 for agent in agents if agent.enabled)
-        busy = sum(1 for agent in agents if agent.status not in {"ожидает", "завершил задачу"})
+        busy = sum(1 for agent in agents if agent.status not in {AgentStatus.IDLE.value, AgentStatus.DONE.value})
         self.activity_text.set(f"Агенты: {active} активных, {busy} в работе")
 
     def change_theme(self) -> None:
         self.db.set_setting("theme", self.theme.get())
         self.apply_theme()
-        for widget in (getattr(self, "chat_text", None), getattr(self, "message_entry", None), getattr(self, "event_text", None), getattr(self, "internal_text", None), getattr(self, "reasoning_text", None), getattr(self, "system_prompt", None)):
+        for widget in (getattr(self, "chat_text", None), getattr(self, "message_entry", None), getattr(self, "event_text", None), getattr(self, "internal_text", None), getattr(self, "reasoning_text", None), getattr(self, "simulation_text", None), getattr(self, "brain_text", None), getattr(self, "system_prompt", None)):
             if widget:
                 widget.configure(bg=self.colors["entry"], fg=self.colors["text"], insertbackground=self.colors["text"])
+
+
+    def toggle_panel(self, panel: str) -> None:
+        if panel == "left" and self._panels_visible.get("left"):
+            self.main_pane.forget(self.left)
+            self._panels_visible["left"] = False
+        elif panel == "right" and self._panels_visible.get("right"):
+            self.main_pane.forget(self.right)
+            self._panels_visible["right"] = False
+        elif panel == "bottom" and self._panels_visible.get("bottom"):
+            self.center_vertical.forget(self.log_frame)
+            self._panels_visible["bottom"] = False
+
+    def restore_panels(self) -> None:
+        if not self._panels_visible.get("left"):
+            self.main_pane.insert(0, self.left, weight=1)
+            self._panels_visible["left"] = True
+        if not self._panels_visible.get("right"):
+            self.main_pane.add(self.right, weight=2)
+            self._panels_visible["right"] = True
+        if not self._panels_visible.get("bottom"):
+            self.center_vertical.add(self.log_frame, weight=2)
+            self._panels_visible["bottom"] = True
+
+    def resolve_decision(self, accepted: bool) -> None:
+        selection = self.decision_list.selection()
+        if not selection:
+            return
+        decision_id = selection[0]
+        state = "принято" if accepted else "отклонено"
+        self.logs.log("approval.resolve", f"Решение #{decision_id} {state} пользователем", level="INFO")
+        self.refresh_logs()
 
     def on_close(self) -> None:
         self.db.close()

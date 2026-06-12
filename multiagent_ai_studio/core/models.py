@@ -17,17 +17,28 @@ class AgentRole(str, Enum):
     WRITER = "Writer"
     DEVOPS = "DevOps"
     SECURITY = "Security"
+    OBSERVER = "Observer"
     TESTER = "Tester"
 
 
 class AgentStatus(str, Enum):
-    IDLE = "ожидает"
-    THINKING = "думает"
-    DISCUSSING = "обсуждает задачу"
-    FILES = "работает с файлами"
-    EXECUTING = "выполняет задачу"
-    DONE = "завершил задачу"
+    IDLE = "ожидание"
+    ANALYZING = "анализ задачи"
+    DISCUSSING = "обсуждение"
+    ACTION = "выполнение действия"
+    FILES = "работа с файлами"
+    MEMORY = "работа с памятью"
+    TOOLS = "использование инструментов"
+    WAITING_AGENT = "ожидание другого агента"
+    WAITING_USER = "ожидание пользователя"
+    DONE = "завершение работы"
     ERROR = "ошибка"
+
+
+class WorkMode(str, Enum):
+    FAST = "Быстрый ответ"
+    TEAM = "Команда"
+    AUTONOMOUS = "Автономная работа"
 
 
 PERMISSION_HELP = {
@@ -70,6 +81,8 @@ CAPABILITY_DESCRIPTIONS = {
     "use_models": "использовать локальные и удалённые модели Ollama",
     "run_tasks": "создавать и выполнять задачи в системе задач",
     "use_plugins": "использовать одобренные плагины",
+    "git": "анализировать Git и предлагать безопасные операции при включённых git-разрешениях",
+    "scripts": "запрашивать запуск разрешённых скриптов через очередь решений",
     "internal_chat": "общаться с другими агентами во внутреннем канале",
 }
 
