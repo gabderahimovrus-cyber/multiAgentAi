@@ -10,8 +10,10 @@ class MemoryService:
     def __init__(self, db: Database) -> None:
         self.db = db
 
-    def build_context(self, agent: Agent, recent_dialogue: str) -> str:
+    def build_context(self, agent: Agent, recent_dialogue: str, project_context: str = "") -> str:
         blocks = []
+        if project_context:
+            blocks.append("Контекст проекта:\n" + project_context)
         if agent.short_memory:
             blocks.append("Краткосрочная память агента:\n" + agent.short_memory)
         if agent.long_memory:
